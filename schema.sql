@@ -145,7 +145,26 @@ CREATE TABLE IF NOT EXISTS daily (               -- день x аэропорт:
     min_carrier REAL, min_weather REAL, min_nas REAL, min_security REAL, min_late_aircraft REAL,
     w_min_vis REAL, w_max_gust REAL, w_ifr_hours INTEGER,
     w_rain INTEGER, w_snow INTEGER, w_ts INTEGER, w_fzra INTEGER, w_fog INTEGER,
+    w_precip_hours INTEGER,                      -- часов с осадками
+    w_lowvis_hours INTEGER,                      -- часов с видимостью < 3 миль
+    w_source        TEXT,                        -- metar (факт) / forecast (прогноз Open-Meteo)
     built_at        TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_runs (          -- версии модели и их метрики
+    model_version TEXT PRIMARY KEY,
+    trained_at    TEXT NOT NULL,
+    train_from    TEXT, train_to TEXT,
+    metrics_json  TEXT,                          -- MAE/MAPE/покрытие модели и бейзлайна по целям
+    importance_json TEXT                         -- важность признаков (permutation importance)
+);
+
+CREATE TABLE IF NOT EXISTS backtest (            -- прогноз vs факт на истории (rolling-origin)
+    model_version TEXT NOT NULL,
+    target        TEXT NOT NULL,
+    date          TEXT NOT NULL,
+    actual REAL, yhat REAL, yhat_lo REAL, yhat_hi REAL, baseline REAL,
+    PRIMARY KEY (model_version, target, date)
 );
 
 CREATE TABLE IF NOT EXISTS predictions (
