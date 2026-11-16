@@ -21,7 +21,8 @@ M_PER_MILE = 1609.344
 def ingest(run):
     resp = http_get(config.OPENMETEO_URL, run, params={
         "latitude": config.AIRPORT_LAT, "longitude": config.AIRPORT_LON, "timezone": "UTC",
-        "forecast_days": 7, "wind_speed_unit": "kn", "hourly": ",".join(HOURLY)})
+        # 8 суток UTC: после перевода в местное время остаются 7 полных дней
+        "forecast_days": 8, "wind_speed_unit": "kn", "hourly": ",".join(HOURLY)})
     if resp.status_code != 200:
         raise SourceError(f"Open-Meteo: HTTP {resp.status_code}")
     payload = resp.text
