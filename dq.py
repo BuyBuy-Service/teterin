@@ -19,7 +19,7 @@ SQL_RULES = [
     ("flights_dep_delay_missing", "error", "Нет задержки у выполненного вылета",
      f"flights WHERE {ACTIVE} AND direction = 'departure' AND cancelled = 0 AND diverted = 0",
      "dep_delay IS NULL", "flight_date || ' ' || carrier || flight_number"),
-    ("flights_delay_range", "error", "Задержка вне диапазона −60…2000 мин",
+    ("flights_delay_range", "warning", "Задержка вне диапазона −60…2000 мин (бывают реальные задержки > 33 ч)",
      f"flights WHERE {ACTIVE} AND dep_delay IS NOT NULL",
      "dep_delay < -60 OR dep_delay > 2000", "flight_date || ' ' || carrier || flight_number"),
     ("flights_del15_consistent", "error", "Флаг DepDel15 не согласован с минутами задержки",

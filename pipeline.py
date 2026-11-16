@@ -174,7 +174,12 @@ def http_get(url: str, run: Run | None = None, params=None, **kwargs) -> request
 def jobs() -> dict:
     from sources import bts, metar, openmeteo
     import dq
-    return {"bts": bts.ingest, "metar": metar.ingest, "openmeteo": openmeteo.ingest, "dq": dq.run}
+    import marts
+    import metar_parser
+    import model
+    return {"bts": bts.ingest, "metar": metar.ingest, "openmeteo": openmeteo.ingest,
+            "weather": metar_parser.transform, "marts": marts.build, "model": model.train_and_predict,
+            "dq": dq.run}
 
 
 def main():
