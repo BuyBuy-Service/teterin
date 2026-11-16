@@ -23,6 +23,7 @@ pio.templates["aero"] = go.layout.Template(layout=dict(
     hoverlabel=dict(bgcolor="white", font_color=INK, bordercolor=AXIS),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text=""),
     margin=dict(l=10, r=10, t=30, b=10), bargap=0.25,
+    separators=", ",  # русский формат: 1 200 и 0,5
 ))
 pio.templates.default = "aero"
 

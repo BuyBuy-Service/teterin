@@ -46,3 +46,5 @@ set AERO_FAULT=rate_limit_429 & .venv\Scripts\python pipeline.py --only openmete
 | [docs/demo-script.md](docs/demo-script.md) | сценарий защиты по ролям и частые вопросы |
 
 **Развернуть у себя и подготовиться к защите — [SETUP.md](SETUP.md).**
+
+Отчёт и презентация: `report/Отчет_Визуализация_данных_AeroPulse.docx`, `report/Презентация_AeroPulse.pptx` (в заметках к слайдам — кто что говорит). Пересборка: `report/build_report.py`, `report/build_deck.py` (зависимости — `report/requirements.txt`).

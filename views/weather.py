@@ -66,6 +66,7 @@ else:
                              name="Видимость", hovertemplate="%{x|%a %d.%m %H:%M}: %{y:.1f} миль<extra></extra>"), 3, 1)
     fig.add_hline(y=3, line=dict(color=ui.STATUS["serious"], dash="dot", width=1.5), row=3, col=1)
     fig.update_layout(showlegend=False, hovermode="x")
+    fig.update_xaxes(tickformat="%d.%m", dtick=86400000)
     fig.update_annotations(font=dict(size=12, color=ui.MUTED), x=0, xanchor="left")
     ui.chart(fig, 420)
     st.caption("Цвет осадков: зелёный — дождь, фиолетовый — снег. Пороги: порывы 30 узлов, видимость 3 мили (граница IFR).")
