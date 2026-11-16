@@ -146,7 +146,7 @@ with c2:
     fig.add_trace(go.Scatter(x=bt.date, y=bt.yhat, name="Прогноз", line=dict(color=ui.SERIES[1], width=2),
                              hovertemplate=f"Прогноз: %{{y:{fmt}}}<extra></extra>"))
     fig.update_yaxes(tickformat=fmt, rangemode="tozero")
-    fig.update_xaxes(rangeslider=dict(visible=True, thickness=0.06))
+    fig.update_xaxes(rangeslider=dict(visible=True, thickness=0.06), tickformat="%d.%m.%y")
     fig.update_layout(hovermode="x unified")
     ui.chart(fig, 270)
     m = json.loads(run.metrics_json[0])[tgt]
