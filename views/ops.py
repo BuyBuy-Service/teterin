@@ -58,12 +58,16 @@ if c1.button("▶️ Обновить данные сейчас", type="primary"
 last = ui.q("""SELECT job, max(finished_at) t FROM load_log WHERE status IN ('success','partial') GROUP BY job""")
 last = dict(zip(last.job, last.t))
 cols = st.columns(3)
-for col, (src, label, wm_label) in zip(cols, [("bts", "BTS — рейсы", "загружено по месяц"),
-                                              ("metar", "METAR — погода", "последняя сводка (UTC)"),
-                                              ("openmeteo", "Open-Meteo — прогноз", "прогноз от")]):
+for col, (src, label, wm_label) in zip(cols, [("bts", "BTS — рейсы", "последний загруженный месяц"),
+                                              ("metar", "METAR — погода", "последняя сводка, UTC"),
+                                              ("openmeteo", "Open-Meteo — прогноз", "начало прогноза, UTC")]):
     t = last.get(src)
     ago = "никогда" if t is None else f"{(pd.Timestamp.now(tz='UTC') - pd.Timestamp(t)).total_seconds() / 3600:.1f} ч назад"
-    col.metric(label, marks.get(src, "—"), help=wm_label)
+    value = marks.get(src, "—")
+    if src != "bts" and value != "—":  # 2026-11-16T00:00:00Z -> 16.11.2026 00:00
+        ts = pd.Timestamp(value)
+        value = ts.strftime("%d.%m.%Y %H:%M")
+    col.metric(label, value, help=wm_label)
     col.caption(f"{wm_label} · обновлялся {ago}")
 
 st.divider()
