@@ -44,3 +44,5 @@ set AERO_FAULT=rate_limit_429 & .venv\Scripts\python pipeline.py --only openmete
 | [docs/dashboard-questions.md](docs/dashboard-questions.md) | вопрос пользователя → виджет → решение |
 | [docs/report-notes.md](docs/report-notes.md) | заготовки разделов отчёта по участникам |
 | [docs/demo-script.md](docs/demo-script.md) | сценарий защиты по ролям и частые вопросы |
+
+**Развернуть у себя и подготовиться к защите — [SETUP.md](SETUP.md).**

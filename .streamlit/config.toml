@@ -6,5 +6,10 @@ secondaryBackgroundColor = "#efeee9"
 textColor = "#0b0b0b"
 font = "sans serif"
 
+[server]
+# без этого при самом первом запуске Streamlit спрашивает email в консоли и ждёт ввода
+headless = true
+port = 8501
+
 [browser]
 gatherUsageStats = false
