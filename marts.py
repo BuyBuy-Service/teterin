@@ -60,6 +60,10 @@ def metar_daily(con, stations) -> pd.DataFrame:
     w = pd.read_sql(f"SELECT * FROM weather_obs WHERE parse_ok = 1 AND station IN ({_in(stations)})", con)
     if w.empty:
         return pd.DataFrame(columns=["station", "date"])
+    # физически невозможные значения (опечатки в сводках вроде «G216KT») — в журнал качества, но не в признаки
+    for col, hi in (("wind_kt", 150), ("gust_kt", 150), ("temp_c", 60)):
+        w[col] = pd.to_numeric(w[col], errors="coerce")  # пустая колонка приходит из SQLite как object
+        w.loc[w[col].abs() >= hi, col] = None
     t = pd.to_datetime(w["observed_at_utc"], utc=True)
     w["date"] = to_local_date(w["observed_at_utc"])
     w["hour"] = t.dt.floor("h")
