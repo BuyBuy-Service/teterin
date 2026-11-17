@@ -19,6 +19,7 @@ from db import connect
 from pipeline import SourceError, get_watermark, http_get, job, now, set_watermark
 
 SOURCE = "metar"
+NETWORK_SOURCE = "metar_network"
 OVERLAP = timedelta(hours=2)
 
 
@@ -28,12 +29,26 @@ def next_month(d: date) -> date:
 
 @job("metar", SOURCE)
 def ingest(run, start: str | None = None, end: str | None = None):
-    """start/end — 'YYYY-MM-DD' (end не включается). По умолчанию: от watermark (или начала истории) до сегодня."""
+    """Сводки аэропорта. start/end — 'YYYY-MM-DD' (end не включается).
+    По умолчанию: от watermark (или начала истории) до сегодня."""
+    load_range(run, SOURCE, [config.AIRPORT_IATA], start, end)
+
+
+@job("metar_network", NETWORK_SOURCE)
+def ingest_network(run, start: str | None = None, end: str | None = None):
+    """Сводки аэропортов сети (config.NETWORK) — куда летит больше всего рейсов. Своя отметка загрузки."""
+    if config.NETWORK:
+        load_range(run, NETWORK_SOURCE, sorted(config.NETWORK), start, end)
+    else:
+        run.note("сеть не задана")
+
+
+def load_range(run, source: str, stations: list[str], start: str | None, end: str | None):
     today = datetime.now(timezone.utc).date()
     if start:
         d0 = date.fromisoformat(start)
     else:
-        wm = get_watermark(SOURCE)
+        wm = get_watermark(source)
         d0 = (datetime.fromisoformat(wm) - OVERLAP).date() if wm else config.HISTORY_START
     d1 = date.fromisoformat(end) if end else today + timedelta(days=1)
     if d1 > today + timedelta(days=1):
@@ -41,18 +56,26 @@ def ingest(run, start: str | None = None, end: str | None = None):
     if d0 >= d1:
         raise ValueError(f"пустой период: {d0} .. {d1}")
 
-    cur = d0
-    while cur < d1:
-        nxt = min(next_month(cur), d1)
-        load_chunk(run, cur, nxt)
-        cur = nxt
-        if cur < d1:
+    ranges = [(d0, d1)]
+    if not start:  # история удлинилась (config.HISTORY_START раньше самой ранней сводки) — догружаем и её
+        with connect() as con:
+            first = con.execute(f"SELECT min(observed_at_utc) FROM raw_metar WHERE station IN "
+                                f"({','.join('?' * len(stations))})", stations).fetchone()[0]
+        if first and date.fromisoformat(first[:10]) > config.HISTORY_START:
+            ranges.insert(0, (config.HISTORY_START, date.fromisoformat(first[:10]) + timedelta(days=1)))
+    for a, b in ranges:
+        cur = a
+        while cur < b:
+            nxt = min(next_month(cur), b)
+            load_chunk(run, cur, nxt, stations, source)
+            cur = nxt
             time.sleep(1)  # вежливость к IEM
 
 
-def load_chunk(run, d0: date, d1: date):
+def load_chunk(run, d0: date, d1: date, stations: list[str] | None = None, source: str = SOURCE):
+    stations = stations or [config.AIRPORT_IATA]
     resp = http_get(config.IEM_URL, run, params={
-        "station": config.AIRPORT_IATA, "data": "metar", "tz": "Etc/UTC", "format": "onlycomma",
+        "station": stations, "data": "metar", "tz": "Etc/UTC", "format": "onlycomma",
         "latlon": "no", "missing": "empty", "report_type": [3, 4],  # 3 — регулярные, 4 — внеочередные (SPECI)
         "year1": d0.year, "month1": d0.month, "day1": d0.day,
         "year2": d1.year, "month2": d1.month, "day2": d1.day})
@@ -66,6 +89,7 @@ def load_chunk(run, d0: date, d1: date):
         con.executemany("INSERT OR IGNORE INTO raw_metar VALUES (?,?,?,?)", rows)
         ins = con.total_changes - before
         if rows:
-            set_watermark(con, SOURCE, max(r[1] for r in rows))
+            set_watermark(con, source, max(r[1] for r in rows))
     run.add(rows_inserted=ins, rows_skipped=len(rows) - ins)
-    print(f"  METAR {d0}..{d1}: сводок {len(rows)}, новых {ins}")
+    print(f"  METAR {'+'.join(stations) if len(stations) < 4 else f'{len(stations)} станций'} {d0}..{d1}: "
+          f"сводок {len(rows)}, новых {ins}")

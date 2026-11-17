@@ -26,6 +26,9 @@ def test_metar_reload_adds_nothing(monkeypatch):
 
 
 def test_metar_incremental_starts_from_watermark(monkeypatch):
+    import config
+    from datetime import date
+    monkeypatch.setattr(config, "HISTORY_START", date(2026, 11, 14))  # история не длиннее загруженного
     calls = []
     monkeypatch.setattr(metar, "http_get", lambda url, run, params: calls.append(params) or Resp())
     metar.ingest(start="2026-11-14", end="2026-11-15")

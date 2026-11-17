@@ -11,6 +11,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 import config
+import marts
 import ui
 from db import connect
 
@@ -23,21 +24,8 @@ ui.page_header("Погода и задержки",
 
 @st.cache_data(ttl=3600, show_spinner="Сопоставляю вылеты с погодой…")
 def flights_with_weather(d0: str, d1: str) -> pd.DataFrame:
-    """Каждому вылету — последняя METAR-сводка не старше 90 минут до планового времени вылета."""
     with connect() as con:
-        f = pd.read_sql("""SELECT flight_date, crs_dep_time, dep_del15 FROM flights
-                           WHERE direction = 'departure' AND is_deleted = 0 AND cancelled = 0
-                             AND dep_del15 IS NOT NULL AND flight_date BETWEEN ? AND ?""", con, params=(d0, d1))
-        w = pd.read_sql("""SELECT observed_at_utc, flight_cat, gust_kt, wind_kt, vis_sm, rain, snow, fzra, ts, fog, precip
-                           FROM weather_obs WHERE parse_ok = 1""", con)
-    hhmm = f["crs_dep_time"].clip(upper=2359)
-    local = pd.to_datetime(f["flight_date"]) + pd.to_timedelta(hhmm // 100, "h") + pd.to_timedelta(hhmm % 100, "m")
-    f["t"] = local.dt.tz_localize(config.AIRPORT_TZ, ambiguous="NaT", nonexistent="shift_forward").dt.tz_convert("UTC")
-    f["hour"], f["dow"] = local.dt.hour, local.dt.day_of_week
-    f = f.dropna(subset=["t"]).sort_values("t")
-    w["t"] = pd.to_datetime(w["observed_at_utc"], utc=True)
-    w = w.sort_values("t")
-    return pd.merge_asof(f, w, on="t", direction="backward", tolerance=pd.Timedelta(minutes=90))
+        return marts.flights_with_weather(con, d0, d1)
 
 
 bounds = ui.q("SELECT min(date) a, max(date) b FROM daily WHERE dep_flown IS NOT NULL")
@@ -46,8 +34,8 @@ lo, hi = date.fromisoformat(bounds.a[0]), date.fromisoformat(bounds.b[0])
 # ---------- 1. Погода на неделю ----------
 ui.question("Какая погода ожидается на неделе и чем она опасна для вылетов?",
             "Прогноз Open-Meteo по часам. Пунктир — пороги, после которых, по истории, задержек заметно больше.")
-fc = ui.q("SELECT * FROM forecast_weather WHERE time_utc >= ? ORDER BY time_utc",
-          (pd.Timestamp.now(tz="UTC").floor("h").strftime("%Y-%m-%dT%H:%M:%SZ"),))
+fc = ui.q("SELECT * FROM forecast_weather WHERE station = ? AND time_utc >= ? ORDER BY time_utc",
+          (config.AIRPORT_IATA, pd.Timestamp.now(tz="UTC").floor("h").strftime("%Y-%m-%dT%H:%M:%SZ")))
 if fc.empty:
     st.info("Прогноза погоды пока нет — запустите загрузку на странице «Журнал и качество».")
 else:
@@ -70,6 +58,46 @@ else:
     fig.update_annotations(font=dict(size=12, color=ui.MUTED), x=0, xanchor="left")
     ui.chart(fig, 420)
     st.caption("Цвет осадков: зелёный — дождь, фиолетовый — снег. Пороги: порывы 30 узлов, видимость 3 мили (граница IFR).")
+
+st.divider()
+
+# ---------- 2. Сеть ----------
+ui.question("В каких аэропортах назначения на неделе ждать непогоду?",
+            "10 аэропортов, куда из ORD летает больше всего рейсов. Непогода там тоже задерживает вылеты из Чикаго: "
+            "рейсы держат на земле, пока не освободится аэропорт прибытия.")
+today_local = pd.Timestamp.now(tz=config.AIRPORT_TZ).strftime("%Y-%m-%d")
+with connect() as con:
+    nd = marts.forecast_daily(con, sorted(config.NETWORK))
+    share = pd.read_sql(f"""SELECT dest, count(*) n FROM flights WHERE direction='departure' AND is_deleted = 0
+                            GROUP BY dest""", con).set_index("dest")["n"]
+nd = nd[nd["date"] >= today_local]
+if nd.empty:
+    st.info("Прогноза для аэропортов сети пока нет.")
+else:
+    def why(r):
+        out = []
+        if r.w_ts: out.append("гроза")
+        if r.w_fzra: out.append("ледяной дождь")
+        if r.w_snow: out.append("снег")
+        if r.w_lowvis_hours >= 3: out.append(f"плохая видимость {r.w_lowvis_hours:.0f} ч")
+        if r.w_max_gust >= 35: out.append(f"порывы {r.w_max_gust:.0f} уз")
+        return ", ".join(out)
+    nd["why"] = [why(r) for r in nd.itertuples()]
+    nd["severe"] = (nd["why"] != "").astype(int)
+    total = share.sum()
+    order = sorted(config.NETWORK, key=lambda s_: -share.get(s_, 0))
+    days = sorted(nd["date"].unique())
+    z = nd.pivot(index="station", columns="date", values="severe").reindex(index=order, columns=days)
+    txt = nd.pivot(index="station", columns="date", values="why").reindex(index=order, columns=days).fillna("")
+    labels = [f"{ui.CITY.get(s_, s_)} · {share.get(s_, 0) / total:.1%}" for s_ in order]
+    xl = [f"{['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][pd.Timestamp(d).weekday()]} {pd.Timestamp(d):%d.%m}" for d in days]
+    fig = go.Figure(go.Heatmap(z=z.values, x=xl, y=labels, customdata=txt.values, zmin=0, zmax=1, showscale=False,
+                               colorscale=[[0, "#eef1f6"], [1, ui.STATUS["serious"]]], xgap=3, ygap=3,
+                               hovertemplate="%{y}, %{x}: %{customdata}<extra></extra>"))
+    fig.update_yaxes(autorange="reversed")
+    ui.chart(fig, 380)
+    st.caption("Оранжевая клетка — в этот день ожидается гроза, ледяной дождь, снег, ≥ 3 ч плохой видимости или "
+               "порывы ≥ 35 узлов. Процент — доля вылетов из ORD в этот аэропорт.")
 
 st.divider()
 c0, c1 = st.columns([2, 3])
@@ -102,20 +130,15 @@ def share_bar(groups: dict, title_x: str, ordinal: bool = False):
 # ---------- 2. Какие условия бьют сильнее ----------
 ui.question("Какие погодные условия сильнее всего бьют по пунктуальности?",
             f"Каждый вылет сопоставлен с METAR-сводкой на момент вылета. Пунктир — средняя доля задержек ({avg:.0%}).")
+groups = marts.weather_groups(fw)
 a, b = st.columns(2)
 with a:
     st.markdown("**По категории полётных условий**")
-    cats = {"VFR — хорошие": "VFR", "MVFR — сложные": "MVFR", "IFR — по приборам": "IFR", "LIFR — очень плохие": "LIFR"}
-    ui.chart(share_bar({k: fw.flight_cat == v for k, v in cats.items()}, "доля задержанных вылетов", ordinal=True), 300)
+    ui.chart(share_bar(groups["categories"], "доля задержанных вылетов", ordinal=True), 300)
     st.caption("Категории FAA по видимости и нижней границе облаков: VFR > 5 миль и > 3000 футов, LIFR < 1 мили или < 500 футов.")
 with b:
     st.markdown("**По погодным явлениям**")
-    gust = fw.gust_kt.fillna(fw.wind_kt)
-    calm = (fw.precip == 0) & (fw.fog == 0) & (fw.ts == 0) & (gust < 30)
-    ui.chart(share_bar({
-        "Без явлений": calm, "Дождь": (fw.rain == 1) & (fw.snow == 0), "Снег": fw.snow == 1,
-        "Ледяной дождь": fw.fzra == 1, "Гроза": fw.ts == 1, "Туман": fw.fog == 1, "Порывы ≥ 30 уз": gust >= 30,
-    }, "доля задержанных вылетов"), 300)
+    ui.chart(share_bar(groups["phenomena"], "доля задержанных вылетов"), 300)
     st.caption("Категории пересекаются: вылет при грозе с дождём учтён и в «Грозе», и в «Дожде».")
 
 st.divider()
