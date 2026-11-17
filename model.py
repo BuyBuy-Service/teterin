@@ -5,7 +5,9 @@
   dep_flown       — число выполненных (не отменённых) вылетов.
 
 Бейзлайн («норма»): см. norm() — среднее по дню недели и месяцу (задержки) или тот же день год назад (рейсы).
-Модель: HistGradientBoosting (loss = абсолютная ошибка, т.е. прогноз медианы) на календаре + погоде дня.
+Модель: HistGradientBoosting (loss = абсолютная ошибка, т.е. прогноз медианы) на календаре, погоде дня в ORD
+и погоде в 10 аэропортах сети (куда летит больше всего рейсов — задержки распространяются по сети).
+Для обоснования выбора на той же проверке считаются: та же модель без погоды сети и линейная регрессия.
 Интервал 10–90%: прогноз + квантили ошибок модели на backtest (факт должен попадать в него ~80% дней).
 Квантильные бустинги пробовали — на ~700 днях они переобучаются, покрытие было 30–55% вместо 80%.
 
@@ -21,8 +23,13 @@ import json
 import holidays
 import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from db import connect
 from pipeline import job, now
@@ -33,6 +40,7 @@ TARGETS = {
 }
 WEATHER = ["w_min_vis", "w_max_gust", "w_precip_hours", "w_lowvis_hours",
            "w_rain", "w_snow", "w_ts", "w_fzra", "w_fog"]
+NETWORK = ["n_severe", "n_ts", "n_snow", "n_lowvis"]  # погода в аэропортах сети, взвешенная по доле рейсов
 CALENDAR = ["dow", "month", "doy_sin", "doy_cos", "holiday_dist"]
 BACKTEST_MONTHS = 6
 HGB = dict(max_iter=300, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20, random_state=42)
@@ -61,8 +69,10 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def features(target: str) -> list[str]:
-    return CALENDAR + WEATHER + ([f"{target}_ly"] if target == "dep_flown" else [])
+def features(target: str, variant: str = "full") -> list[str]:
+    """variant: full — все признаки; local — без погоды в аэропортах сети (для сравнения)."""
+    net = NETWORK if variant == "full" else []
+    return CALENDAR + WEATHER + net + ([f"{target}_ly"] if target == "dep_flown" else [])
 
 
 def norm(train: pd.DataFrame, rows: pd.DataFrame, target: str) -> np.ndarray:
@@ -79,8 +89,19 @@ def norm(train: pd.DataFrame, rows: pd.DataFrame, target: str) -> np.ndarray:
     return avg
 
 
-def fit(train: pd.DataFrame, target: str) -> HistGradientBoostingRegressor:
-    return HistGradientBoostingRegressor(loss="absolute_error", **HGB).fit(train[features(target)], train[target])
+def fit(train: pd.DataFrame, target: str, variant: str = "full", kind: str = "hgb"):
+    """kind: hgb — основная модель; linear — линейная регрессия (для сравнения)."""
+    cols = features(target, variant)
+    if kind == "hgb":
+        mdl = HistGradientBoostingRegressor(loss="absolute_error", **HGB)
+    else:  # день недели и месяц — категории, остальное — числа; пропуски заполняем медианой
+        num = [c for c in cols if c not in ("dow", "month")]
+        mdl = make_pipeline(ColumnTransformer([
+            ("cat", OneHotEncoder(handle_unknown="ignore"), ["dow", "month"]),
+            ("num", make_pipeline(SimpleImputer(strategy="median"), StandardScaler()), num)]), Ridge(alpha=1.0))
+    mdl.fit(train[cols], train[target])
+    mdl.feature_list = cols
+    return mdl
 
 
 def interval(residuals) -> tuple[float, float]:
@@ -90,7 +111,7 @@ def interval(residuals) -> tuple[float, float]:
 
 
 def predict(model, rows: pd.DataFrame, target: str, offsets=(0.0, 0.0)) -> pd.DataFrame:
-    mid = model.predict(rows[features(target)])
+    mid = model.predict(rows[model.feature_list])
     lo, hi = mid + offsets[0], mid + offsets[1]
     if target == "dep_del15_share":
         mid, lo, hi = (np.clip(a, 0, 1) for a in (mid, lo, hi))
@@ -106,7 +127,7 @@ def metrics(actual, pred, lo=None, hi=None) -> dict:
     return m
 
 
-def backtest(df: pd.DataFrame, target: str):
+def backtest(df: pd.DataFrame, target: str, variant: str = "full", kind: str = "hgb"):
     """Rolling-origin: каждый из последних месяцев прогнозируем моделью, обученной только на данных до него.
     Интервал для месяца строим по ошибкам на ОСТАЛЬНЫХ месяцах — чтобы покрытие было честным."""
     hist = df[df[target].notna() & df["w_source"].notna()]
@@ -116,7 +137,7 @@ def backtest(df: pd.DataFrame, target: str):
         train, test = hist[hist["date"] < m.to_timestamp()], hist[hist["date"].dt.to_period("M") == m]
         if len(train) < 180 or test.empty:
             continue
-        mdl = fit(train, target)
+        mdl = fit(train, target, variant, kind)
         p = predict(mdl, test, target)
         p["actual"], p["baseline"], p["date"], p["fold"] = test[target], norm(train, test, target), test["date"], str(m)
         parts.append(p)
@@ -133,9 +154,9 @@ def backtest(df: pd.DataFrame, target: str):
 
 
 def importance(mdl, test: pd.DataFrame, target: str) -> dict:
-    r = permutation_importance(mdl, test[features(target)], test[target],
+    r = permutation_importance(mdl, test[mdl.feature_list], test[target],
                                scoring="neg_mean_absolute_error", n_repeats=10, random_state=42)
-    return dict(sorted(zip(features(target), map(float, r.importances_mean)), key=lambda kv: -kv[1]))
+    return dict(sorted(zip(mdl.feature_list, map(float, r.importances_mean)), key=lambda kv: -kv[1]))
 
 
 @job("model")
@@ -149,6 +170,9 @@ def train_and_predict(run):
             "model": metrics(bt["actual"], bt["yhat"], bt["yhat_lo"], bt["yhat_hi"]),
             "baseline": metrics(bt["actual"], bt["baseline"]),
             "n_days": len(bt), "from": bt["date"].min().strftime("%Y-%m-%d"), "to": bt["date"].max().strftime("%Y-%m-%d"),
+            # те же дни, другие модели — чтобы обосновать выбор признаков и метода
+            "compare": {name: metrics(b["actual"], b["yhat"])["mae"] for name, b in (
+                ("hgb_local", backtest(df, target, "local")[0]), ("linear", backtest(df, target, "full", "linear")[0]))},
         }
         imp_all[target] = importance(last_model, last_test, target)
         bt_rows += [(version, target, r.date.strftime("%Y-%m-%d"), r.actual, r.yhat, r.yhat_lo, r.yhat_hi, r.baseline)
@@ -162,8 +186,9 @@ def train_and_predict(run):
         pred_rows += [(d.strftime("%Y-%m-%d"), target, r.yhat, r.yhat_lo, r.yhat_hi, r.baseline, version, now())
                       for d, r in zip(future["date"], p.itertuples())]
         mm, mb = metrics_all[target]["model"], metrics_all[target]["baseline"]
-        print(f"  {target}: MAE модели {mm['mae']:.4g} vs бейзлайн {mb['mae']:.4g}, "
-              f"покрытие {mm['coverage']:.0f}%, прогноз на {len(future)} дн.")
+        cmp = metrics_all[target]["compare"]
+        print(f"  {target}: MAE модели {mm['mae']:.4g} | без сети {cmp['hgb_local']:.4g} | линейная "
+              f"{cmp['linear']:.4g} | норма {mb['mae']:.4g}; покрытие {mm['coverage']:.0f}%, прогноз на {len(future)} дн.")
         train_range = (hist["date"].min().strftime("%Y-%m-%d"), hist["date"].max().strftime("%Y-%m-%d"))
 
     with connect() as con:

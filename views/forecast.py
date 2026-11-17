@@ -25,7 +25,7 @@ if run.empty:
     st.stop()
 version = run.model_version[0]
 pred = ui.q("""SELECT p.*, d.w_max_gust, d.w_precip_hours, d.w_lowvis_hours, d.w_snow, d.w_ts, d.w_fzra, d.w_rain,
-                      d.w_source
+                      d.w_source, d.n_severe
                FROM predictions p JOIN daily d ON d.date = p.target_date
                WHERE p.model_version = ? ORDER BY p.target_date""", (version,))
 pred["date"] = pd.to_datetime(pred["target_date"])
@@ -43,6 +43,8 @@ def risks(r) -> list[str]:
     if r.w_max_gust and r.w_max_gust >= 30: out.append(f"порывы до {r.w_max_gust:.0f} уз")
     if r.w_lowvis_hours and r.w_lowvis_hours >= 3: out.append(f"плохая видимость {r.w_lowvis_hours:.0f} ч")
     if r.w_precip_hours and r.w_precip_hours >= 6 and not r.w_snow: out.append(f"осадки {r.w_precip_hours:.0f} ч")
+    if r.n_severe and r.n_severe >= 0.3:
+        out.append(f"непогода в аэропортах назначения ({r.n_severe:.0%} рейсов сети)")
     return out
 
 
@@ -97,7 +99,7 @@ fig.add_trace(go.Scatter(
                 symbol=["triangle-up" if a else "circle" for a in delay.above],
                 line=dict(color=ui.SURFACE, width=2)),
     customdata=[[ui.pct(r.yhat_lo), ui.pct(r.yhat_hi), ", ".join(risks(r)) or "без опасных явлений",
-                 "▲ выше нормы" if r.above else "в пределах нормы"] for r in delay.itertuples()],
+                 "выше нормы" if r.above else "в пределах нормы"] for r in delay.itertuples()],
     hovertemplate="<b>%{x}</b><br>Прогноз: %{y:.0%} (%{customdata[0]}…%{customdata[1]})<br>"
                   "%{customdata[3]}<br>Погода: %{customdata[2]}<extra></extra>"))
 fig.update_yaxes(tickformat=".0%", rangemode="tozero", title="доля вылетов с задержкой ≥15 мин")
@@ -106,11 +108,11 @@ ui.chart(fig, 360)
 
 bad = delay[delay.above]
 if bad.empty:
-    st.success(f"✅ Все дни в пределах нормы (порог +{thr} п.п.) — дополнительный резерв не нужен.")
+    st.success(f"Все дни в пределах нормы (порог +{thr} п.п.) — дополнительный резерв не нужен.")
 else:
     lines = [f"- **{r.label}** — {ui.pct(r.yhat)} при норме {ui.pct(r.baseline)}"
              + (f"; причина: {', '.join(risks(r))}" if risks(r) else "") for r in bad.itertuples()]
-    st.warning("⚠️ **Дни выше нормы — стоит заложить резерв персонала и стоек:**\n" + "\n".join(lines))
+    st.warning("**Дни выше нормы — стоит заложить резерв персонала и стоек:**\n" + "\n".join(lines))
 
 st.divider()
 c1, c2 = st.columns(2)

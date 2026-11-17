@@ -14,6 +14,7 @@ def synthetic(days=800, seed=0):
         "w_min_vis": np.where(snow, 1.0, 10.0), "w_max_gust": rng.uniform(5, 40, days),
         "w_precip_hours": snow * 8, "w_lowvis_hours": snow * 6,
         "w_rain": 0, "w_snow": snow.astype(int), "w_ts": 0, "w_fzra": 0, "w_fog": 0,
+        "n_severe": rng.random(days), "n_ts": 0.0, "n_snow": 0.0, "n_lowvis": 0.0,
     })
     df["dep_del15_share"] = 0.15 + 0.2 * snow + rng.normal(0, 0.03, days)
     df["dep_flown"] = 1000 + 50 * (d.day_of_week < 5) - 150 * snow + rng.normal(0, 20, days)

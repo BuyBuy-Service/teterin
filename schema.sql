@@ -127,12 +127,14 @@ CREATE TABLE IF NOT EXISTS weather_obs (         -- распарсенный MET
     PRIMARY KEY (station, observed_at_utc)
 );
 
-CREATE TABLE IF NOT EXISTS forecast_weather (    -- последний почасовой прогноз Open-Meteo
-    time_utc      TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS forecast_weather (    -- последний почасовой прогноз Open-Meteo (аэропорт и сеть)
+    station       TEXT NOT NULL,                 -- код IATA
+    time_utc      TEXT NOT NULL,
     fetched_at    TEXT NOT NULL,
     temp_c        REAL, precip_mm REAL, snow_cm REAL,
     wind_kt       REAL, gust_kt REAL, vis_sm REAL,
-    cloud_cover   REAL, weather_code INTEGER
+    cloud_cover   REAL, weather_code INTEGER,
+    PRIMARY KEY (station, time_utc)
 );
 
 -- ===== Витрина и прогноз =====
@@ -148,6 +150,8 @@ CREATE TABLE IF NOT EXISTS daily (               -- день x аэропорт:
     w_precip_hours INTEGER,                      -- часов с осадками
     w_lowvis_hours INTEGER,                      -- часов с видимостью < 3 миль
     w_source        TEXT,                        -- metar (факт) / forecast (прогноз Open-Meteo)
+    -- погода в аэропортах сети, взвешенная по доле рейсов из ORD (0..1 — доля рейсов, летящих в такую погоду)
+    n_severe REAL, n_ts REAL, n_snow REAL, n_lowvis REAL,
     built_at        TEXT NOT NULL
 );
 
