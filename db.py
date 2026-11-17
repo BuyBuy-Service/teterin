@@ -13,8 +13,16 @@ def connect() -> sqlite3.Connection:
     return con
 
 
+# таблицы, которые полностью пересобираются при каждом запуске: при изменении схемы их можно просто пересоздать
+REBUILT = {"forecast_weather": "station", "daily": "n_severe"}
+
+
 def init_db() -> None:
     with connect() as con:
+        for table, new_col in REBUILT.items():  # миграция: старая версия таблицы без новой колонки
+            cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
+            if cols and new_col not in cols:
+                con.execute(f"DROP TABLE {table}")
         con.executescript((config.ROOT / "schema.sql").read_text(encoding="utf-8"))
 
 

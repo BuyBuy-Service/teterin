@@ -177,7 +177,8 @@ def jobs() -> dict:
     import marts
     import metar_parser
     import model
-    return {"bts": bts.ingest, "metar": metar.ingest, "openmeteo": openmeteo.ingest,
+    return {"bts": bts.ingest, "metar": metar.ingest, "metar_network": metar.ingest_network,
+            "openmeteo": openmeteo.ingest,
             "weather": metar_parser.transform, "marts": marts.build, "model": model.train_and_predict,
             "dq": dq.run}
 

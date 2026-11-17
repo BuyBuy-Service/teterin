@@ -61,25 +61,31 @@ def parse_period(value: str) -> str:
 
 @job("bts", SOURCE)
 def ingest(run, month: str | None = None):
-    """Без параметров — догрузить все новые месяцы. month='YYYY-MM' — (пере)загрузить конкретный месяц."""
+    """Без параметров — догрузить все недостающие месяцы от начала истории (config.HISTORY_START) до текущего:
+    новые месяцы после watermark и «дыры» до него (например, если историю удлинили в конфиге).
+    month='YYYY-MM' — (пере)загрузить конкретный месяц."""
     if month:
         periods = [parse_period(month)]
     else:
-        wm = get_watermark(SOURCE)
-        first = month_add(wm, 1) if wm else config.HISTORY_START.strftime("%Y-%m")
+        with connect() as con:
+            loaded = {r[0] for r in con.execute("SELECT DISTINCT period FROM raw_files WHERE source = ?", (SOURCE,))}
         last = date.today().strftime("%Y-%m")
-        periods = []
-        p = first
+        periods, p = [], config.HISTORY_START.strftime("%Y-%m")
         while p <= last:
-            periods.append(p)
+            if p not in loaded:
+                periods.append(p)
             p = month_add(p, 1)
     if not periods:
         run.note("новых месяцев нет")
+    wm = get_watermark(SOURCE)
     for p in periods:
         path = download(run, p)
-        if path is None:  # 404 — дальше месяцы тем более не опубликованы
-            run.note(f"{p}: ещё не опубликован в BTS")
-            break
+        if path is None:
+            if wm is None or p > wm:  # после последнего загруженного — дальше тем более не опубликовано
+                run.note(f"{p}: ещё не опубликован в BTS")
+                break
+            run.note(f"{p}: нет на сайте BTS")  # дыра в прошлом — пропускаем, идём дальше
+            continue
         load_zip(run, path, url=config.BTS_URL.format(year=int(p[:4]), month=int(p[5:])))
 
 

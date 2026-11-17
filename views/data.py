@@ -81,7 +81,7 @@ else:
                             disabled=[c for c in df.columns if c not in EDIT_COLS + ["mark"]], key="flights_editor")
 
     b1, b2, b3, _ = st.columns([1.3, 1.6, 1.3, 3])
-    if b1.button("💾 Сохранить изменения", type="primary"):
+    if b1.button("Сохранить изменения", type="primary", icon=":material/save:"):
         errors, n_fields, n_rows = [], 0, 0
         for i in range(len(view)):
             before, after = view.iloc[i], edited.iloc[i]
@@ -100,12 +100,12 @@ else:
         ui.refresh()
         msg = f"Изменено полей: {n_fields} в {n_rows} рейсах; {'восстановлено' if deleting else 'удалено'}: {n_del}."
         (st.warning if errors else st.success)(msg + ("\n\nОшибки:\n- " + "\n- ".join(errors) if errors else ""))
-    if b2.button("🔄 Пересчитать витрину и прогноз"):
+    if b2.button("Пересчитать витрину и прогноз", icon=":material/refresh:"):
         with st.spinner("Пересобираю витрину и переобучаю модель…"):
             r1, r2 = marts.build(), model.train_and_predict()
         ui.refresh()
         st.success(f"Витрина: {r1.status}, модель: {r2.status}")
-    b3.download_button("⬇️ Выгрузить CSV", df.drop(columns="mark").to_csv(index=False).encode("utf-8-sig"),
+    b3.download_button("Выгрузить CSV", icon=":material/download:", data= df.drop(columns="mark").to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"flights_{period[0]}_{period[1]}.csv", mime="text/csv")
 
 st.divider()

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+import config
 from db import connect
 from pipeline import job, now
 
@@ -43,7 +44,7 @@ SQL_RULES = [
 ]
 
 # свежесть: источник -> (допустимый возраст, единица)
-FRESHNESS = {"bts": (24 * 35, "ч"), "metar": (3, "ч"), "openmeteo": (12, "ч")}
+FRESHNESS = {"bts": (24 * 35, "ч"), "metar": (3, "ч"), "metar_network": (3, "ч"), "openmeteo": (12, "ч")}
 
 
 @job("dq")
@@ -88,8 +89,9 @@ def daily_volume(con):
 
 
 def metar_gaps(con):
-    """Дыры в METAR больше 2 часов (сводки должны идти ежечасно)."""
-    t = pd.to_datetime(pd.read_sql("SELECT DISTINCT observed_at_utc t FROM raw_metar ORDER BY 1", con)["t"])
+    """Дыры в METAR аэропорта больше 2 часов (сводки должны идти ежечасно)."""
+    t = pd.to_datetime(pd.read_sql("SELECT DISTINCT observed_at_utc t FROM raw_metar WHERE station = ? ORDER BY 1",
+                                   con, params=(config.AIRPORT_IATA,))["t"])
     gaps = t.diff() > pd.Timedelta(hours=2)
     return ("metar_gaps_2h", "warning", len(t), int(gaps.sum()),
             [f"{a} → {b}" for a, b in zip(t.shift(1)[gaps].astype(str).head(5), t[gaps].astype(str).head(5))])
@@ -122,5 +124,6 @@ RULE_DESCRIPTIONS = {c: d for c, _s, d, *_ in SQL_RULES} | {
     "metar_gaps_2h": "Перерывы в METAR-сводках больше 2 часов",
     "freshness_bts": "Давно не запускалась загрузка BTS (>35 дней)",
     "freshness_bts_period": "Последний месяц BTS отстаёт больше чем на 4 месяца",
-    "freshness_metar": "METAR не обновлялся больше 3 ч", "freshness_openmeteo": "Прогноз погоды не обновлялся больше 12 ч",
+    "freshness_metar": "METAR не обновлялся больше 3 ч",
+    "freshness_metar_network": "METAR аэропортов сети не обновлялся больше 3 ч", "freshness_openmeteo": "Прогноз погоды не обновлялся больше 12 ч",
 }

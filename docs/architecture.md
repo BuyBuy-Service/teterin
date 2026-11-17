@@ -4,7 +4,7 @@
 flowchart LR
     subgraph Источники
         S1[BTS On-Time<br/>ZIP с CSV, помесячно]
-        S2[IEM METAR<br/>текстовые сводки]
+        S2[IEM METAR<br/>текстовые сводки ORD + 10 аэропортов сети]
         S3[Open-Meteo<br/>JSON-прогноз]
     end
     subgraph raw["Сырые данные (неизменяемые)"]
@@ -29,7 +29,7 @@ flowchart LR
 
 Все шаги — функции-«джобы» с одинаковой обвязкой (`pipeline.py`): запись в журнал `load_log`,
 watermark источника, ретраи HTTP, защита от параллельного запуска. Порядок цепочки:
-`bts → metar → openmeteo → weather (разбор METAR) → marts → model → dq`.
+`bts → metar → metar_network → openmeteo → weather (разбор METAR) → marts → model → dq`.
 Ошибка одного шага пишется в журнал и не останавливает следующие.
 
 ## Запуск и автоматизация

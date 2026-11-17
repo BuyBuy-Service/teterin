@@ -10,10 +10,12 @@ import dq
 import pipeline
 import ui
 
-ICON = {"success": "✅", "partial": "⚠️", "failed": "❌", "skipped": "⏭️", "running": "⏳"}
+LABEL = {"success": "успешно", "partial": "частично", "failed": "ошибка", "skipped": "пропущен",
+         "running": "выполняется"}
 COLOR = {"success": ui.STATUS["good"], "partial": ui.STATUS["warning"], "failed": ui.STATUS["critical"],
          "skipped": ui.MUTED, "running": ui.BLUE}
 JOB_NAMES = {"bts": "BTS: рейсы", "bts_import": "BTS: ручной импорт", "metar": "METAR: погода",
+             "metar_network": "METAR: аэропорты сети",
              "openmeteo": "Open-Meteo: прогноз", "weather_transform": "Разбор METAR", "marts": "Витрина",
              "model": "Модель", "dq": "Проверки качества"}
 FAULTS = {"none": "без сбоев", "timeout": "таймаут источников", "rate_limit_429": "лимит запросов (429)",
@@ -31,7 +33,7 @@ c1, c2, _ = st.columns([1.4, 1.6, 3])
 fault = c2.selectbox("Демо-режим сбоев", list(FAULTS), format_func=FAULTS.get,
                      help="Для демонстрации устойчивости: источники «падают», система ретраит, пишет ошибку в журнал "
                           "и продолжает остальные шаги.")
-if c1.button("▶️ Обновить данные сейчас", type="primary"):
+if c1.button("Обновить данные сейчас", type="primary", icon=":material/sync:"):
     os.environ["AERO_FAULT"] = fault
     try:
         with st.status("Выполняю цепочку обработки…", expanded=True) as box:
@@ -45,11 +47,11 @@ if c1.button("▶️ Обновить данные сейчас", type="primary"
                     r = fn(trigger="manual")
                 results.append(r)
                 s = r.stats
-                st.write(f"{ICON[r.status]} новых {s['rows_inserted']}, обновлено {s['rows_updated']}, "
+                st.write(f"**{LABEL[r.status]}**: новых {s['rows_inserted']}, обновлено {s['rows_updated']}, "
                          f"пропущено {s['rows_skipped']}, ретраев {s['retries']}" + (f" — {r.error}" if r.error else ""))
             worst = "failed" if any(r.status == "failed" for r in results) else \
                 "partial" if any(r.status != "success" for r in results) else "success"
-            box.update(label=f"{ICON[worst]} Готово", state="error" if worst == "failed" else "complete")
+            box.update(label=f"Готово: {LABEL[worst]}", state="error" if worst == "failed" else "complete")
     finally:
         os.environ["AERO_FAULT"] = "none"
     ui.refresh()
@@ -108,7 +110,7 @@ log["t"] = pd.to_datetime(log.started_at)
 fig = go.Figure()
 for status, g in log.groupby("status"):
     fig.add_trace(go.Scatter(
-        x=g.t, y=g.job_name, mode="markers", name=f"{ICON.get(status, '')} {status}",
+        x=g.t, y=g.job_name, mode="markers", name=LABEL.get(status, status),
         marker=dict(size=11, color=COLOR.get(status, ui.MUTED), line=dict(color=ui.SURFACE, width=2)),
         customdata=g[["rows_inserted", "rows_skipped", "retries", "error"]].fillna("").values,
         hovertemplate="%{y} · %{x|%d.%m %H:%M}<br>новых %{customdata[0]}, пропущено %{customdata[1]}, "
@@ -116,14 +118,22 @@ for status, g in log.groupby("status"):
 fig.update_yaxes(categoryorder="array", categoryarray=list(JOB_NAMES.values())[::-1])
 ui.chart(fig, 320)
 
-show = log.assign(status=log.status.map(lambda x: f"{ICON.get(x, '')} {x}")).fillna("")[
+show = log.assign(status=log.status.map(lambda x: LABEL.get(x, x))).fillna("")[
     ["id", "job_name", "trigger", "started_at", "status", "rows_fetched", "rows_inserted", "rows_updated",
      "rows_skipped", "http_calls", "retries", "watermark_before", "watermark_after", "error"]]
-st.dataframe(show.rename(columns={"id": "№", "job_name": "Шаг", "trigger": "Запуск", "started_at": "Начало (UTC)",
+TEXT_COLOR = {LABEL[k]: v for k, v in COLOR.items()} | {"OK": ui.STATUS["good"], "внимание": "#b7791f"}
+
+
+def paint(table, col="Статус"):
+    """Статус — словом и цветом текста (вместо значков)."""
+    return table.style.map(lambda v: f"color: {TEXT_COLOR.get(v, ui.INK2)}; font-weight: 600", subset=[col])
+
+
+st.dataframe(paint(show.rename(columns={"id": "№", "job_name": "Шаг", "trigger": "Запуск", "started_at": "Начало (UTC)",
                                   "status": "Статус", "rows_fetched": "Получено", "rows_inserted": "Новых",
                                   "rows_updated": "Обновлено", "rows_skipped": "Пропущено", "http_calls": "HTTP",
                                   "retries": "Ретраи", "watermark_before": "Watermark до",
-                                  "watermark_after": "Watermark после", "error": "Ошибка / замечание"}),
+                                  "watermark_after": "Watermark после", "error": "Ошибка / замечание"})),
              hide_index=True, width="stretch", height=300)
 
 st.divider()
@@ -136,12 +146,12 @@ if res.empty:
     st.info("Проверки ещё не запускались.")
 else:
     res["ok"] = res.failed == 0
-    res["Статус"] = [("✅ OK" if ok else ("❌ ошибка" if sev == "error" else "⚠️ внимание"))
+    res["Статус"] = [("OK" if ok else ("ошибка" if sev == "error" else "внимание"))
                      for ok, sev in zip(res.ok, res.severity)]
     res["Правило"] = res.rule.map(lambda r: dq.RULE_DESCRIPTIONS.get(r, r))
     res["Доля"] = [f"{f / c:.3%}" if c else "—" for f, c in zip(res.failed, res.checked)]
-    st.dataframe(res[["Статус", "Правило", "severity", "checked", "failed", "Доля"]].rename(
-        columns={"severity": "Важность", "checked": "Проверено", "failed": "Не прошло"}),
+    st.dataframe(paint(res[["Статус", "Правило", "severity", "checked", "failed", "Доля"]].rename(
+        columns={"severity": "Важность", "checked": "Проверено", "failed": "Не прошло"})),
         hide_index=True, width="stretch")
     bad = res[~res.ok]
     if not bad.empty:
