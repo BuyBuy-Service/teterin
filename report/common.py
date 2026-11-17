@@ -39,8 +39,11 @@ def facts() -> dict:
     fl = q("""SELECT count(*) n, sum(direction='departure') dep, min(flight_date) a, max(flight_date) b,
                      count(DISTINCT carrier) carriers FROM flights WHERE is_deleted = 0""").iloc[0]
     f.update(flights=int(fl.n), departures=int(fl.dep), date_from=fl.a, date_to=fl.b, carriers=int(fl.carriers))
-    w = q("SELECT count(*) n, sum(parse_ok) ok FROM weather_obs").iloc[0]
+    w = q("SELECT count(*) n, sum(parse_ok) ok FROM weather_obs WHERE station = ?", (config.AIRPORT_IATA,)).iloc[0]
     f.update(metar=int(w.n), metar_ok=int(w.ok))
+    w = q("SELECT count(*) n, sum(parse_ok) ok, count(DISTINCT station) st FROM weather_obs WHERE station != ?",
+          (config.AIRPORT_IATA,)).iloc[0]
+    f.update(metar_net=int(w.n), metar_net_ok=int(w.ok or 0), net_stations=int(w.st))
     d = q("SELECT avg(dep_flown) flown, sum(dep_del15_share*dep_flown)/sum(dep_flown) share FROM daily WHERE dep_flown IS NOT NULL").iloc[0]
     f.update(avg_flown=float(d.flown), del15=float(d.share))
     run = q("SELECT * FROM model_runs ORDER BY trained_at DESC LIMIT 1").iloc[0]
@@ -53,6 +56,22 @@ def facts() -> dict:
     f["causes"] = {k: float(v / tot) for k, v in c.items()}
     f["dq"] = q("SELECT rule, severity, checked, failed FROM dq_log WHERE run_id = (SELECT max(run_id) FROM dq_log)")
     f["bts_wm"] = q("SELECT value FROM watermarks WHERE source='bts'").value[0]
+    f["months"] = int(q("SELECT count(DISTINCT substr(flight_date, 1, 7)) n FROM flights").n[0])
+
+    # погода в момент вылета -> доля задержек (то же, что на странице «Погода и задержки»)
+    import marts
+    fw = marts.flights_with_weather(con, f["date_from"], f["date_to"])
+    groups = marts.weather_groups(fw)
+    f["wx_avg"] = float(fw["dep_del15"].mean())
+    f["wx"] = {kind: {name: (float(fw.loc[m, "dep_del15"].mean()), int(m.sum())) for name, m in g.items()}
+               for kind, g in groups.items()}
+    h = fw.groupby("hour")["dep_del15"].agg(["mean", "size"])
+    f["hours"] = h[h["size"] > 5000]["mean"]
+
+    # погода в сети -> доля задержек по дням
+    d = q("SELECT dep_del15_share s, n_severe FROM daily WHERE dep_del15_share IS NOT NULL AND n_severe IS NOT NULL")
+    bins = pd.cut(d["n_severe"], [-0.01, 0.1, 0.3, 0.5, 1.0], labels=["< 10%", "10–30%", "30–50%", "> 50%"])
+    f["net_bins"] = d.groupby(bins, observed=False)["s"].agg(["mean", "size"])
     con.close()
     return f
 
